@@ -1,67 +1,66 @@
-from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException
 from pydantic import BaseModel
-import torch
-from .model import NanoVLM
-from transformers import AutoTokenizer
 from PIL import Image
 import io
+import torch
+from .model import NanoVLM
+import json
+import os
 
 app = FastAPI(title="MedCraft NanoVLM Service")
 
-# Initialize model and tokenizer
-MODEL_NAME = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
+# Initialize model
+# Use CPU for dev, CUDA if available
+device = "cuda" if torch.cuda.is_available() else "cpu"
+# Disable QLoRA for default dev to avoid bitsandbytes issues on non-GPU
+USE_QLORA = os.getenv("USE_QLORA", "False").lower() == "true"
+
 try:
-    # In production, we would use 4-bit quantization here
-    # model = NanoVLM(text_model_name=MODEL_NAME)
-    # tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
-    model = None
-    tokenizer = None
+    model = NanoVLM(use_qlora=USE_QLORA).to(device)
+    print(f"NanoVLM loaded on {device}")
 except Exception as e:
-    print(f"Warning: Could not load NanoVLM: {e}")
+    print(f"Failed to load NanoVLM: {e}")
     model = None
-    tokenizer = None
 
-class ReasoningRequest(BaseModel):
+class QARequest(BaseModel):
     prompt: str
-    context: str = ""
 
-class ReasoningResponse(BaseModel):
-    answer: str
-    evidence: dict
-    certainty: float
+class QAResponse(BaseModel):
+    findings: str
+    confidence: float
+    evidence_roi: list
+    refusal_reason: str = None
 
 @app.get("/healthz")
 async def healthz():
-    return {"status": "healthy"}
+    return {"status": "healthy", "device": device}
 
-@app.post("/reasoning/qa", response_model=ReasoningResponse)
-async def grounded_qa(request: ReasoningRequest, file: UploadFile = File(None)):
-    # 1. Process image if provided
-    image = None
-    if file:
-        contents = await file.read()
-        image = Image.open(io.BytesIO(contents)).convert("RGB")
-    
-    # 2. Run NanoVLM inference
-    if model and image:
-        try:
-            answer = model.generate(image, request.prompt)
-        except Exception as e:
-            print(f"Inference error: {e}")
-            answer = "Error during inference. Please check logs."
-    else:
-        answer = "Model not loaded or no image provided. Running in mock mode: Based on the visual evidence and clinical history, there is a high likelihood of pneumonia in the left lower lobe."
-
-    # 3. Return grounded JSON
-    return ReasoningResponse(
-        answer=answer,
-        evidence={
-            "roi_ids": ["lung_left_lower"],
-            "mask_urls": ["/masks/lung_left_lower.png"]
-        },
-        certainty=0.89
-    )
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8003)
+@app.post("/grounded_qa", response_model=QAResponse)
+async def grounded_qa(prompt: str, file: UploadFile = File(...)):
+    if not model:
+        raise HTTPException(status_code=503, detail="Model not loaded")
+        
+    try:
+        image_content = await file.read()
+        image = Image.open(io.BytesIO(image_content)).convert("RGB")
+        
+        # Generate response
+        # We expect the model to return a structured string or we parse it.
+        # For now, we'll prompt the model to be structured.
+        full_prompt = f"Analyze this medical image. Prompt: {prompt}. Return JSON with findings, confidence (0-1), and evidence_roi [x1, y1, x2, y2]."
+        
+        response_text = model.generate(image, full_prompt)
+        
+        # Mock parsing since the base model isn't actually fine-tuned to output JSON yet
+        # In a real scenario, we'd use a parser or constrained generation.
+        # Here we'll wrap the text in the response structure.
+        
+        return QAResponse(
+            findings=response_text,
+            confidence=0.95, # Mock confidence
+            evidence_roi=[0, 0, 100, 100], # Mock ROI
+            refusal_reason=None
+        )
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

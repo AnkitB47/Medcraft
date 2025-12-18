@@ -6,23 +6,32 @@ class NeuralMemory(nn.Module):
     """
     Neural Memory module for Titans.
     Uses a weight matrix M that is updated via gradient descent on a 'surprise' loss.
+    Updates: M_t = (1 - alpha_t) * M_{t-1} + S_t
+    Surprise: S_t = eta_t * S_{t-1} - theta_t * grad(Loss)
+    Loss: || M(k) - v ||^2
     """
     def __init__(self, dim, memory_dim=128, learning_rate=0.01, momentum=0.9):
         super().__init__()
         self.dim = dim
         self.memory_dim = memory_dim
         self.learning_rate = learning_rate
-        self.momentum = momentum
+        self.default_momentum = momentum
         
         # The memory is a weight matrix M [memory_dim, dim]
-        # We treat it as a parameter but update it manually during forward pass
         self.register_buffer('memory', torch.randn(memory_dim, dim))
-        self.register_buffer('optimizer_state', torch.zeros_like(self.memory))
+        self.register_buffer('optimizer_state', torch.zeros_like(self.memory)) # S_{t-1}
         
         # Projections for Key, Value, Query
         self.to_k = nn.Linear(dim, memory_dim, bias=False)
         self.to_v = nn.Linear(dim, dim, bias=False)
         self.to_q = nn.Linear(dim, memory_dim, bias=False)
+        
+        # Adaptive parameters (alpha, eta, theta)
+        # In a full implementation, these would be data-dependent (functions of x_t)
+        # For this implementation, we make them learnable scalars or simple functions
+        self.alpha_gate = nn.Sequential(nn.Linear(dim, 1), nn.Sigmoid()) # Forgetting
+        self.eta_gate = nn.Sequential(nn.Linear(dim, 1), nn.Sigmoid())   # Momentum decay
+        self.theta_gate = nn.Sequential(nn.Linear(dim, 1), nn.Sigmoid()) # Learning rate modulation
 
     def forward(self, x):
         """
@@ -31,86 +40,104 @@ class NeuralMemory(nn.Module):
         b, n, d = x.shape
         
         # 1. Retrieve (Attention over Memory)
-        # Q comes from input x
         q = self.to_q(x) # [b, n, memory_dim]
         
-        # K, V come from the Memory weights M
-        # In Titans, M serves as the weights. 
-        # We can interpret M as a collection of key-value associations or just parameters.
-        # Simplified interpretation: M * x is the retrieval? 
-        # Paper: "The memory module is a neural network... trained online."
-        # Let's implement the "Memory as Context" via retrieval:
-        # Retrieval = Attention(Q=x, K=M_keys, V=M_values)
-        # But M is a matrix. Let's assume M projects input to output.
+        # Retrieval: M * q^T? Or q * M?
+        # M maps memory_dim -> dim. 
+        # So retrieved = q @ M
+        memory_weight = self.memory # [memory_dim, dim]
+        retrieved = torch.matmul(q, memory_weight) # [b, n, dim]
         
-        # Let's stick to the reference implementation style:
-        # M is used to process the input.
-        # Surprise = || M(k) - v ||^2
-        
-        # Generate Keys and Values from input for the update
+        # 2. Update (Gradient Descent on Surprise)
+        # We need to compute gradients w.r.t M for the loss || M(k) - v ||^2
         k = self.to_k(x) # [b, n, memory_dim]
         v = self.to_v(x) # [b, n, dim]
         
-        # RETRIEVAL: Use current Memory M to predict v given k
-        # prediction = k @ M
-        # M shape: [memory_dim, dim]
-        # k shape: [b, n, memory_dim]
-        # pred shape: [b, n, dim]
+        # We process token by token or chunk by chunk for correct causal updates.
+        # For simplicity in this "in-place" implementation, we'll do a simplified batch update 
+        # that approximates the online learning. In a strict loop, we'd iterate.
         
-        # We use the batch-specific memory if we were doing per-sample memory, 
-        # but here we have a global shared memory for the tenant (loaded in buffer).
+        # Let's do a mean update over the sequence to simulate "learning from this context"
+        # Prediction using current memory
+        pred_v = torch.matmul(k, memory_weight)
         
-        memory_weight = self.memory # [memory_dim, dim]
-        retrieved = torch.matmul(k, memory_weight) # [b, n, dim]
+        # Error
+        error = pred_v - v # [b, n, dim]
         
-        # 2. Update (Gradient Descent on Surprise)
-        # Loss = MSE(retrieved, v)
-        # We want to update M such that M(k) is closer to v.
-        # Gradients w.r.t M: (M k - v)^T k  (simplified)
+        # Gradient dL/dM = k^T * error
+        # [b, n, memory_dim]^T * [b, n, dim] -> [b, memory_dim, dim]
+        grad = torch.matmul(k.transpose(1, 2), error).mean(dim=0) # Average over batch
         
-        # We need to detach M for the "surprise" calculation to avoid backprop through time if not needed,
-        # but for the update we need the gradient.
+        # Adaptive gates (averaged over sequence for this update step)
+        x_mean = x.mean(dim=1) # [b, dim]
+        alpha = self.alpha_gate(x_mean).mean() # Scalar forgetting
+        eta = self.eta_gate(x_mean).mean()     # Scalar momentum decay
+        theta = self.theta_gate(x_mean).mean() # Scalar lr modulation
         
-        # Error signal
-        error = retrieved - v # [b, n, dim]
+        # Update Momentum (Surprise)
+        # S_t = eta * S_{t-1} - theta * grad
+        self.optimizer_state = eta * self.optimizer_state - theta * grad
         
-        # Gradient: dL/dM = k^T * error
-        # k: [b, n, memory_dim] -> [b, memory_dim, n]
-        # error: [b, n, dim]
-        # grad: [b, memory_dim, dim]
+        # Update Memory
+        # M_t = (1 - alpha) * M_{t-1} + S_t
+        self.memory = (1 - alpha) * self.memory + self.optimizer_state
         
-        grad = torch.matmul(k.transpose(1, 2), error)
-        
-        # Average grad over batch? Or sum?
-        grad = grad.mean(dim=0) # [memory_dim, dim]
-        
-        # Momentum update
-        self.optimizer_state = self.momentum * self.optimizer_state + (1 - self.momentum) * grad
-        
-        # Apply update
-        # M_new = M_old - lr * state
-        self.memory = self.memory - self.learning_rate * self.optimizer_state
-        
-        # Return the retrieved content (memory's "thought" about the input)
         return retrieved
 
 class TitansMemory(nn.Module):
-    def __init__(self, dim):
+    def __init__(self, dim, num_persistent_tokens=16, mode="mac"):
         super().__init__()
+        self.mode = mode.lower()
+        self.dim = dim
         self.neural_memory = NeuralMemory(dim)
-        self.gate = nn.Sequential(
-            nn.Linear(dim * 2, dim),
-            nn.Sigmoid()
-        )
+        
+        # Persistent Memory (Learnable prefix tokens)
+        self.persistent_memory = nn.Parameter(torch.randn(1, num_persistent_tokens, dim))
+        
+        # Gating for MAG
+        if self.mode == "mag":
+            self.gate = nn.Sequential(nn.Linear(dim * 2, dim), nn.Sigmoid())
+            
+        # Layers for MAL
+        if self.mode == "mal":
+            self.layer_norm = nn.LayerNorm(dim)
 
     def forward(self, x):
-        # x: [b, n, dim]
-        memory_out = self.neural_memory(x)
+        b, n, d = x.shape
         
-        # Gating: Combine Input and Memory
-        combined = torch.cat([x, memory_out], dim=-1)
-        g = self.gate(combined)
+        # Prepend persistent memory
+        # P: [1, p, d] -> [b, p, d]
+        p_mem = self.persistent_memory.expand(b, -1, -1)
         
-        out = g * x + (1 - g) * memory_out
-        return out
+        # In MAC, we might concatenate P to input for attention, 
+        # but here we treat P as part of the context that the memory "sees" or is conditioned on.
+        # For simplicity, we'll pass x through memory.
+        
+        if self.mode == "mac":
+            # Memory As Context
+            # Retrieve from memory
+            mem_out = self.neural_memory(x) # [b, n, d]
+            # Concatenate P, Mem, Input? 
+            # Usually MAC means Mem is added to context.
+            # Here we return [P, Mem_out, x] or just Mem_out depending on usage.
+            # Let's return the enriched context.
+            return torch.cat([p_mem, mem_out, x], dim=1)
+            
+        elif self.mode == "mag":
+            # Memory As Gating
+            mem_out = self.neural_memory(x)
+            combined = torch.cat([x, mem_out], dim=-1)
+            g = self.gate(combined)
+            out = g * x + (1 - g) * mem_out
+            return out
+            
+        elif self.mode == "mal":
+            # Memory As Layer
+            # Input -> Memory -> Norm -> Output
+            mem_out = self.neural_memory(x)
+            return self.layer_norm(x + mem_out)
+            
+        else:
+            return x
+
 

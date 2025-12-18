@@ -1,4 +1,5 @@
 from airflow import DAG
+from airflow.operators.bash import BashOperator
 from airflow.operators.python import PythonOperator
 from datetime import datetime, timedelta
 import os
@@ -6,116 +7,97 @@ import os
 default_args = {
     'owner': 'medcraft',
     'depends_on_past': False,
-    'start_date': datetime(2023, 1, 1),
+    'start_date': datetime(2024, 1, 1),
     'email_on_failure': False,
     'email_on_retry': False,
     'retries': 1,
     'retry_delay': timedelta(minutes=5),
 }
 
-# 1. Data Preparation DAG
-with DAG(
-    'dag_data_prep',
-    default_args=default_args,
-    description='Pulls raw datasets, validates, and pushes to DVC',
-    schedule_interval=timedelta(days=1),
-    catchup=False,
-) as dag_data_prep:
-
-    def pull_and_validate():
-        print("Pulling datasets (Parkinson, CXR, Audio, etc.)...")
-        # Logic to download from open sources or BYOD
-        print("Validating checksums...")
-        print("Pushing to DVC remote...")
-
-    t1 = PythonOperator(
-        task_id='pull_and_validate',
-        python_callable=pull_and_validate,
+# 1. Data Pipeline
+with DAG('medcraft_data_pipeline', default_args=default_args, schedule_interval='@daily', catchup=False) as data_dag:
+    download_data = BashOperator(
+        task_id='download_data',
+        bash_command='python scripts/download_data.py'
     )
+    
+    preprocess_data = BashOperator(
+        task_id='preprocess_data',
+        bash_command='python scripts/preprocess_data.py'
+    )
+    
+    dvc_push = BashOperator(
+        task_id='dvc_push',
+        bash_command='dvc push'
+    )
+    
+    download_data >> preprocess_data >> dvc_push
 
-# 2. Model Training DAG
-with DAG(
-    'dag_train_models',
-    default_args=default_args,
-    description='Trains YOLO, ViT, and NanoVLM models',
-    schedule_interval=None,
-) as dag_train_models:
+# 2. Training Pipeline
+with DAG('medcraft_training_pipeline', default_args=default_args, schedule_interval='@weekly', catchup=False) as train_dag:
+    train_nanovlm = BashOperator(
+        task_id='train_nanovlm',
+        bash_command='python services/nanovlm/finetune.py'
+    )
+    
+    train_yolo = BashOperator(
+        task_id='train_yolo',
+        bash_command='yolo detect train model=yolov8n.pt data=data/coco128.yaml epochs=10 imgsz=640'
+    )
+    
+    # Titans training would be here
+    
+    register_models = BashOperator(
+        task_id='register_models',
+        bash_command='python scripts/register_models.py'
+    )
+    
+    [train_nanovlm, train_yolo] >> register_models
 
-    def train_yolo():
-        print("Training YOLOv8 on CXR/Retina/Pathology...")
-        # mlflow.start_run()
-        # model.train()
-        # mlflow.log_metrics()
+# 3. Evaluation Pipeline
+with DAG('medcraft_evaluation_pipeline', default_args=default_args, schedule_interval='@weekly', catchup=False) as eval_dag:
+    eval_nanovlm = BashOperator(
+        task_id='eval_nanovlm',
+        bash_command='python eval/eval_nanovlm.py'
+    )
+    
+    eval_yolo = BashOperator(
+        task_id='eval_yolo',
+        bash_command='python eval/eval_yolo.py'
+    )
+    
+    eval_titans = BashOperator(
+        task_id='eval_titans',
+        bash_command='python eval/eval_titans.py'
+    )
+    
+    generate_report = BashOperator(
+        task_id='generate_report',
+        bash_command='python eval/generate_report.py'
+    )
+    
+    [eval_nanovlm, eval_yolo, eval_titans] >> generate_report
 
-    def train_nanovlm():
-        print("Fine-tuning NanoVLM via QLoRA...")
-
-    t1 = PythonOperator(task_id='train_yolo', python_callable=train_yolo)
-    t2 = PythonOperator(task_id='train_nanovlm', python_callable=train_nanovlm)
-
-# 3. Evaluation and Perf Gate DAG
-with DAG(
-    'dag_eval_and_perf_gate',
-    default_args=default_args,
-    description='Runs evaluation and enforces SLOs',
-    schedule_interval=None,
-) as dag_eval_and_perf_gate:
-
-    def run_eval():
-        print("Running robustness and calibration tests...")
-        # if metrics < threshold: raise Exception("Perf gate failed")
-
-    t1 = PythonOperator(task_id='run_eval', python_callable=run_eval)
-
-# 4. Export and Optimize DAG
-with DAG(
-    'dag_export_optimize',
-    default_args=default_args,
-    description='Exports to ONNX and prepares Triton repo',
-    schedule_interval=None,
-) as dag_export_optimize:
-
-    def export_onnx():
-        print("Exporting models to ONNX...")
-
-    t1 = PythonOperator(task_id='export_onnx', python_callable=export_onnx)
-
-# 5. Deploy and Promote DAG
-with DAG(
-    'dag_deploy_promote',
-    default_args=default_args,
-    description='Promotes model to Production and triggers rollout',
-    schedule_interval=None,
-) as dag_deploy_promote:
-
-    def promote_model():
-        print("Promoting model in MLflow Registry...")
-        # Trigger Helm upgrade or canary rollout
-
-    t1 = PythonOperator(task_id='promote_model', python_callable=promote_model)
-
-# 6. Drift Detection DAG
-with DAG(
-    'dag_drift_nightly',
-    default_args=default_args,
-    description='Nightly drift detection on holdout set',
-    schedule_interval='@nightly',
-) as dag_drift_nightly:
-
-    def detect_drift():
-        print("Detecting drift...")
-
-    t1 = PythonOperator(task_id='detect_drift', python_callable=detect_drift)
-
-# 7. Active Learning DAG
-with DAG(
-    'dag_active_learning',
-    default_args=default_args,
-    description='Fine-tunes models on curated feedback',
-    schedule_interval=None,
-) as dag_active_learning:
-
-    def active_learning_step():
-        print("Curating FP/FN examples and fine-tuning...")
-
-    t1 = PythonOperator(task_id='active_learning_step', python_callable=active_learning_step)
+# 4. Deployment Pipeline
+with DAG('medcraft_deployment_pipeline', default_args=default_args, schedule_interval=None, catchup=False) as deploy_dag:
+    build_images = BashOperator(
+        task_id='build_images',
+        bash_command='docker-compose build'
+    )
+    
+    push_images = BashOperator(
+        task_id='push_images',
+        bash_command='docker-compose push'
+    )
+    
+    deploy_helm = BashOperator(
+        task_id='deploy_helm',
+        bash_command='helm upgrade --install medcraft ops/helm/medcraft --namespace medcraft --create-namespace'
+    )
+    
+    smoke_tests = BashOperator(
+        task_id='smoke_tests',
+        bash_command='python tests/smoke_tests.py'
+    )
+    
+    build_images >> push_images >> deploy_helm >> smoke_tests

@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  nanovlm:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    environment:
+      - USE_QLORA=True
+
+  vision_yolo:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  triton:
+    image: nvcr.io/nvidia/tritonserver:23.10-py3
+    command: ["tritonserver", "--model-repository=/models"]
+    volumes:
+      - ./models:/models
+    ports:
+      - "8000:8000"
+      - "8001:8001"
+      - "8002:8002"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

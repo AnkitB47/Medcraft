@@ -1,77 +1,64 @@
-# MedCraft: Multimodal Medical AI Platform
+# MedCraft AI
 
-MedCraft is a production-grade, end-to-end multimodal medical AI platform designed for clinical decision support. It features specialized modules for Parkinson's screening, Chest X-Ray analysis, Retina tracking, and Pathology WSI analysis, all augmented by a custom NanoVLM reasoning engine and Titans long-term memory.
+MedCraft is an enterprise-grade AI platform for medical analysis, featuring:
+- **Titans Memory**: Long-term neural memory with surprise-based updates (MAC/MAG/MAL).
+- **NanoVLM**: Vision-Language Model with Perceiver Resampler and TinyLlama (QLoRA).
+- **Hybrid Vision**: YOLOv8 + ViT for robust detection and classification.
+- **MLOps**: Full Airflow pipelines for data, training, and evaluation.
 
-## Architecture
+## 🚀 Quick Start
 
-- **Frontend**: Next.js (TypeScript) with a premium dark theme.
-- **API Gateway**: FastAPI with Auth, RBAC, and Redis Streams.
-- **Vision Service**: YOLOv8 + ViT for localization and classification.
-- **NanoVLM Service**: Custom VLM architecture for grounded clinical QA.
-- **Titans Memory Service**: MAC, MAG, and MAL layers for context management.
-- **MLOps**: Airflow, MLflow, DVC, and Triton Inference Server.
-- **Infrastructure**: Terraform (Azure) and Helm (AKS).
-
-## Deployment
-
-### One-Shot Azure Deployment (Recommended)
-
-This project is configured for automated "one-shot" deployment to Azure via GitHub Actions.
-
-**Prerequisites:**
-1.  **Azure Account**: Active subscription.
-2.  **GitHub Repository**: Push this code to a GitHub repo.
-
-**Steps:**
-
-1.  **Create Azure Service Principal**:
-    ```bash
-    az ad sp create-for-rbac --name "medcraft-cicd" --role contributor --scopes /subscriptions/<SUBSCRIPTION_ID> --sdk-auth
-    ```
-    Copy the JSON output.
-
-2.  **Configure GitHub Secrets**:
-    Go to `Settings > Secrets and variables > Actions` in your repo and add:
-    - `AZURE_CREDENTIALS`: Paste the JSON from step 1.
-
-3.  **Trigger Deployment**:
-    - Push to `main` branch OR
-    - Go to "Actions" tab > "MedCraft One-Shot Deploy" > "Run workflow".
-
-**What happens automatically:**
-- Terraform provisions AKS, ACR, Postgres, Redis.
-- Docker images are built and pushed to ACR.
-- Helm charts deploy all services to AKS.
-- The platform becomes live at the AKS LoadBalancer IP.
-
-### Local Development (CPU)
-1.  **Environment Setup**:
-    ```bash
-    cp .env.example .env
-    # Edit .env if needed (defaults work for local)
-    ```
-2.  **Run Stack**:
-    ```bash
-    make dev
-    ```
-    Access UI at `http://localhost:3000`.
-
-### Local Development (GPU)
+### Local Development
 ```bash
+# Start all services (CPU)
+make dev
+
+# Start with GPU support (Triton, QLoRA)
 make dev_gpu
 ```
 
-## Project Structure
-- `/apps/web`: Next.js frontend.
-- `/services/api`: FastAPI gateway.
-- `/services/vision_yolo`: Vision service.
-- `/services/nanovlm`: Reasoning service.
-- `/services/titans_memory`: Memory service.
-- `/ops/airflow`: ML orchestration.
-- `/ops/terraform`: Azure IaC.
-- `/ops/helm`: K8s manifests.
-- `/data`: DVC-managed data.
-- `/eval`: Evaluation pipeline.
+### Evaluation
+Run the full evaluation suite to generate `eval/INVESTOR_REPORT.pdf`:
+```bash
+make eval_all
+```
 
-## License
-Proprietary - MedCraft AI
+## 🏗 Architecture
+
+### Titans Memory (`services/titans_memory`)
+Implements the Titans architecture (arXiv:2501.00663) with:
+- **Neural Memory**: Gradient-based updates on surprise loss.
+- **Variants**: Memory as Context (MAC), Gating (MAG), Layer (MAL).
+- **Persistence**: Redis-backed state storage.
+
+### NanoVLM (`services/nanovlm`)
+- **Vision**: Frozen CLIP ViT.
+- **Connector**: Trainable Perceiver Resampler.
+- **LLM**: TinyLlama-1.1B (QLoRA supported).
+- **Inference**: Structured JSON output.
+
+### Hybrid Vision (`services/vision_yolo`)
+- **Detection**: YOLOv8n.
+- **Classification**: ViT-Base on ROIs.
+- **Export**: ONNX/TensorRT ready.
+
+## 🚢 Deployment
+
+### One-Shot Azure Deployment
+The platform is deployed via GitHub Actions (`.github/workflows/deploy.yml`).
+1. Set `AZURE_CREDENTIALS` in GitHub Secrets.
+2. Push to `main` branch.
+3. The pipeline will:
+   - Provision Infrastructure (AKS, ACR, Postgres, Redis) via Terraform.
+   - Build and Push Docker Images.
+   - Deploy via Helm.
+   - Run Smoke Tests.
+
+### Manual Deployment
+```bash
+# Build images
+make build
+
+# Deploy to Kubernetes
+helm upgrade --install medcraft ops/helm/medcraft
+```

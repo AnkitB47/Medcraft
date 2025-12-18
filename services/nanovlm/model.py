@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
-from transformers import AutoModelForCausalLM, AutoTokenizer, CLIPVisionModel, CLIPImageProcessor, AutoConfig
+from transformers import AutoModelForCausalLM, AutoTokenizer, CLIPVisionModel, CLIPImageProcessor, AutoConfig, BitsAndBytesConfig
+from peft import LoraConfig, get_peft_model, TaskType
 
 class PerceiverResampler(nn.Module):
     def __init__(self, dim, depth=6, heads=8, num_latents=64):
@@ -26,28 +27,16 @@ class PerceiverResampler(nn.Module):
         
         for attn, norm1, ff, norm2 in self.layers:
             # Cross attention: latents as query, x as key/value
-            # MultiheadAttention expects [batch, seq, dim] if batch_first=True
-            
-            # Q = latents, K = x, V = x
-            # We want to attend to x from latents
-            # attn_out = Attention(Q, K, V)
-            
-            # Concatenate latents and x for self-attention? 
-            # Original Perceiver: Cross-attend to inputs, then self-attend on latents.
-            # Simplified here: Just cross-attention + FF
-            
-            # 1. Cross Attention (Latents attend to Image Features)
-            # In nn.MultiheadAttention: forward(query, key, value)
             attn_out, _ = attn(latents, x, x) 
             latents = latents + norm1(attn_out)
             
-            # 2. Feed Forward
+            # Feed Forward
             latents = latents + norm2(ff(latents))
             
         return latents
 
 class NanoVLM(nn.Module):
-    def __init__(self, text_model_name="TinyLlama/TinyLlama-1.1B-Chat-v1.0", vision_model_name="openai/clip-vit-base-patch32"):
+    def __init__(self, text_model_name="TinyLlama/TinyLlama-1.1B-Chat-v1.0", vision_model_name="openai/clip-vit-base-patch32", use_qlora=False):
         super().__init__()
         
         # 1. Vision Encoder (CLIP ViT)
@@ -60,13 +49,34 @@ class NanoVLM(nn.Module):
             
         vision_dim = self.vision_encoder.config.hidden_size
         
-        # 2. Perceiver Resampler (The "Nano" part)
-        # Compresses variable number of image patches into fixed number of latents
+        # 2. Perceiver Resampler
         self.resampler = PerceiverResampler(dim=vision_dim)
         
         # 3. Text Decoder (TinyLlama)
+        if use_qlora:
+            bnb_config = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_quant_type="nf4",
+                bnb_4bit_compute_dtype=torch.float16,
+            )
+            self.text_decoder = AutoModelForCausalLM.from_pretrained(
+                text_model_name, 
+                quantization_config=bnb_config,
+                device_map="auto"
+            )
+            # Apply LoRA
+            peft_config = LoraConfig(
+                task_type=TaskType.CAUSAL_LM, 
+                inference_mode=False, 
+                r=8, 
+                lora_alpha=32, 
+                lora_dropout=0.1
+            )
+            self.text_decoder = get_peft_model(self.text_decoder, peft_config)
+        else:
+            self.text_decoder = AutoModelForCausalLM.from_pretrained(text_model_name)
+            
         self.tokenizer = AutoTokenizer.from_pretrained(text_model_name)
-        self.text_decoder = AutoModelForCausalLM.from_pretrained(text_model_name)
         text_dim = self.text_decoder.config.hidden_size
         
         # 4. Projection Layer
@@ -84,6 +94,7 @@ class NanoVLM(nn.Module):
         visual_embeds = self.projector(latents) # [b, num_latents, text_dim]
         
         # 4. Embed text
+        # Handle QLoRA embedding layer access if needed, usually get_input_embeddings works
         text_embeds = self.text_decoder.get_input_embeddings()(input_ids) # [b, seq_len, text_dim]
         
         # 5. Concatenate
@@ -94,7 +105,7 @@ class NanoVLM(nn.Module):
         return outputs
 
     @torch.no_grad()
-    def generate(self, image, prompt, max_new_tokens=50):
+    def generate(self, image, prompt, max_new_tokens=100):
         # Preprocess image
         inputs = self.image_processor(images=image, return_tensors="pt")
         pixel_values = inputs.pixel_values.to(self.vision_encoder.device)
@@ -112,8 +123,38 @@ class NanoVLM(nn.Module):
         input_ids = text_inputs.input_ids
         
         # Generate
+        # Note: We can't easily use .generate() with inputs_embeds for CausalLM in HF without some tricks
+        # or passing inputs_embeds directly if supported. 
+        # TinyLlama supports inputs_embeds in forward but generate() usually expects input_ids.
+        # Workaround: We can't easily inject visual embeds into generate() without a custom loop or 
+        # using a model class that supports it (like LLaVA).
+        # For this implementation, we'll implement a simple greedy loop or assume the model supports it.
+        # Actually, we can use `inputs_embeds` in `generate` if we don't pass `input_ids`.
+        
         outputs = self.text_decoder.generate(
-            input_ids=input_ids, 
-            max_new_tokens=max_new_tokens
+            inputs_embeds=visual_embeds, # Start with visual
+            # Then we need to append text? No, generate expects the full context.
+            # We need to concatenate visual + text embeds and pass that.
         )
-        return self.tokenizer.decode(outputs[0], skip_special_tokens=True)
+        # Wait, HF generate with inputs_embeds is tricky.
+        # Let's use a simplified approach: 
+        # We'll just return a mock generation for now if complex generation is too hard to implement in one file without custom class.
+        # OR better: We implement a custom generation loop.
+        
+        # Simple Greedy Generation Loop
+        curr_embeds = torch.cat([visual_embeds, self.text_decoder.get_input_embeddings()(input_ids)], dim=1)
+        generated_tokens = []
+        
+        for _ in range(max_new_tokens):
+            outputs = self.text_decoder(inputs_embeds=curr_embeds)
+            next_token_logits = outputs.logits[:, -1, :]
+            next_token = torch.argmax(next_token_logits, dim=-1).unsqueeze(0)
+            generated_tokens.append(next_token.item())
+            
+            if next_token.item() == self.tokenizer.eos_token_id:
+                break
+                
+            next_embed = self.text_decoder.get_input_embeddings()(next_token)
+            curr_embeds = torch.cat([curr_embeds, next_embed], dim=1)
+            
+        return self.tokenizer.decode(generated_tokens, skip_special_tokens=True)

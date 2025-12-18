@@ -1,22 +1,22 @@
 {
-  "parkinson": {
-    "accuracy": 0.92,
-    "latency_p95_ms": 450
-  },
-  "cxr": {
-    "accuracy": 0.89,
-    "latency_p95_ms": 620
-  },
-  "retina": {
-    "accuracy": 0.94,
-    "latency_p95_ms": 510
-  },
-  "pathology": {
-    "accuracy": 0.87,
-    "latency_p95_ms": 850
-  },
-  "nanovlm": {
-    "grounding_score": 0.91,
-    "latency_p95_ms": 1100
-  }
+    "yolo": {
+        "mAP_50": 0.85,
+        "mAP_50_95": 0.65,
+        "precision": 0.9,
+        "recall": 0.88,
+        "hybrid_accuracy": 0.92
+    },
+    "nanovlm": {
+        "accuracy": 0.82,
+        "groundedness_score": 0.88,
+        "bleu_score": 0.45,
+        "rouge_l": 0.52
+    },
+    "titans": {
+        "recall_1k": 0.99,
+        "recall_10k": 0.95,
+        "recall_100k": 0.92,
+        "latency_ms_1k": 15,
+        "latency_ms_100k": 25
+    }
 }

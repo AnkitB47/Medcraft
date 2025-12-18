@@ -1,84 +1,67 @@
+from ultralytics import YOLO
+from transformers import ViTForImageClassification, ViTImageProcessor
 import torch
 import torch.nn as nn
-from ultralytics import YOLO
-from torchvision.models import vit_b_16, ViT_B_16_Weights
-from torchvision import transforms
 from PIL import Image
+import os
 
-class HybridVisionModel(nn.Module):
-    """
-    Hybrid Vision Model:
-    1. YOLOv8 for Object Detection (Localization)
-    2. ViT for Fine-grained Classification of ROIs
-    """
-    def __init__(self, yolo_path="yolov8n.pt", num_classes=2):
-        super().__init__()
+class HybridVisionModel:
+    def __init__(self, yolo_path="yolov8n.pt", vit_path="google/vit-base-patch16-224"):
+        # 1. Detection (YOLOv8)
+        self.yolo = YOLO(yolo_path)
         
-        # 1. YOLOv8 (Detector)
-        # We wrap it but typically run it in inference mode to get boxes
-        try:
-            self.detector = YOLO(yolo_path)
-        except:
-            print("Warning: YOLO weights not found, using default")
-            self.detector = YOLO("yolov8n.pt")
-            
-        # 2. ViT (Classifier)
-        # We use a pretrained ViT and replace the head for our specific task (e.g. Parkinson vs Normal)
-        self.classifier = vit_b_16(weights=ViT_B_16_Weights.DEFAULT)
+        # 2. Classification (ViT)
+        self.vit = ViTForImageClassification.from_pretrained(vit_path)
+        self.vit_processor = ViTImageProcessor.from_pretrained(vit_path)
         
-        # Replace head
-        in_features = self.classifier.heads.head.in_features
-        self.classifier.heads.head = nn.Linear(in_features, num_classes)
-        
-        # Preprocessing for ViT
-        self.vit_transform = transforms.Compose([
-            transforms.Resize((224, 224)),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-        ])
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.vit.to(self.device)
 
-    def forward(self, image_path_or_array):
-        """
-        Full pipeline: Detect -> Crop -> Classify
-        """
-        # 1. Run Detection
-        results = self.detector(image_path_or_array)
+    def predict(self, image_path: str, conf_threshold=0.25):
+        # 1. Run YOLO Detection
+        results = self.yolo(image_path, conf=conf_threshold)
         
         detections = []
+        image = Image.open(image_path).convert("RGB")
         
-        # For each detection, crop and classify
         for r in results:
             boxes = r.boxes
-            orig_img = r.orig_img # numpy array
-            
             for box in boxes:
-                # Get coordinates
-                x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
+                # Extract ROI
+                x1, y1, x2, y2 = box.xyxy[0].tolist()
+                roi = image.crop((x1, y1, x2, y2))
                 
-                # Crop ROI
-                roi = orig_img[int(y1):int(y2), int(x1):int(x2)]
-                
-                if roi.size == 0:
-                    continue
-                    
-                # Convert to PIL for transform
-                roi_pil = Image.fromarray(roi)
-                
-                # Preprocess for ViT
-                roi_tensor = self.vit_transform(roi_pil).unsqueeze(0) # [1, 3, 224, 224]
-                
-                # Run Classification
+                # 2. Run ViT Classification on ROI
+                inputs = self.vit_processor(images=roi, return_tensors="pt").to(self.device)
                 with torch.no_grad():
-                    logits = self.classifier(roi_tensor)
-                    probs = torch.softmax(logits, dim=1)
-                    cls_idx = torch.argmax(probs).item()
-                    confidence = probs[0][cls_idx].item()
+                    outputs = self.vit(**inputs)
+                    logits = outputs.logits
+                    predicted_class_idx = logits.argmax(-1).item()
+                    label = self.vit.config.id2label[predicted_class_idx]
+                    confidence = torch.softmax(logits, dim=-1)[0, predicted_class_idx].item()
                 
                 detections.append({
-                    "bbox": [float(x1), float(y1), float(x2), float(y2)],
-                    "yolo_class": int(box.cls[0].item()),
-                    "vit_class": cls_idx,
-                    "vit_confidence": confidence
+                    "bbox": [x1, y1, x2, y2],
+                    "yolo_class": r.names[int(box.cls[0])],
+                    "yolo_conf": float(box.conf[0]),
+                    "vit_class": label,
+                    "vit_conf": confidence,
+                    "hybrid_conf": (float(box.conf[0]) + confidence) / 2
                 })
                 
         return detections
+
+    def export_onnx(self, output_path="models/hybrid_vision.onnx"):
+        # Export YOLO
+        self.yolo.export(format="onnx")
+        
+        # Export ViT
+        dummy_input = torch.randn(1, 3, 224, 224).to(self.device)
+        torch.onnx.export(
+            self.vit, 
+            dummy_input, 
+            "models/vit.onnx", 
+            input_names=["pixel_values"], 
+            output_names=["logits"]
+        )
+        print("Models exported to ONNX")

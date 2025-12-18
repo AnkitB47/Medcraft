@@ -1,10 +1,10 @@
-fastapi
-uvicorn
 torch
 torchvision
 transformers
+accelerate
+pillow
+fastapi
+uvicorn
+python-multipart
 peft
 bitsandbytes
-pydantic
-numpy
-PIL

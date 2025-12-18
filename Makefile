@@ -1,17 +1,8 @@
-# MedCraft Makefile
+.PHONY: setup dev dev_gpu test lint clean build push deploy eval_all
 
-.PHONY: dev dev_gpu eval_all deploy_azure test lint clean help
-
-help:
-	@echo "MedCraft Platform Makefile"
-	@echo "Usage:"
-	@echo "  make dev          - Run local CPU stack"
-	@echo "  make dev_gpu      - Run local GPU stack"
-	@echo "  make eval_all     - Run all evaluations and generate report"
-	@echo "  make deploy_azure - Provision and deploy to Azure"
-	@echo "  make test         - Run all tests"
-	@echo "  make lint         - Run linting"
-	@echo "  make clean        - Clean up temporary files"
+setup:
+	pip install -r requirements.txt
+	pre-commit install
 
 dev:
 	docker-compose up --build
@@ -19,24 +10,28 @@ dev:
 dev_gpu:
 	docker-compose -f docker-compose.yml -f docker-compose.gpu.yml up --build
 
-eval_all:
-	@echo "Running evaluation pipeline..."
-	# Trigger Airflow DAG or run local script
-	python eval/run_all.py
-
-deploy_azure:
-	@echo "Deploying to Azure..."
-	cd ops/terraform/azure && terraform init && terraform apply -auto-approve
-	# Helm deploy logic here
-
 test:
-	pytest services/api services/vision_yolo services/nanovlm services/titans_memory
+	pytest tests/
 
 lint:
 	flake8 .
-	black --check .
+	black . --check
 
 clean:
 	find . -type d -name "__pycache__" -exec rm -rf {} +
-	rm -rf .pytest_cache
-	rm -rf .coverage
+	find . -type f -name "*.pyc" -delete
+
+build:
+	docker-compose build
+
+push:
+	docker-compose push
+
+deploy:
+	gh workflow run deploy.yml
+
+eval_all:
+	python eval/eval_yolo.py
+	python eval/eval_nanovlm.py
+	python eval/eval_titans.py
+	python eval/generate_report.py
