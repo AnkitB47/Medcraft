@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+torch
+torchvision
+transformers
+peft
+bitsandbytes
+pydantic
+numpy
+PIL

@@ -1,0 +1,63 @@
+name: MedCraft One-Shot Deploy
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  AZURE_RESOURCE_GROUP: medcraft-rg
+  AZURE_LOCATION: eastus
+  ACR_NAME: medcraftacr
+  AKS_CLUSTER_NAME: medcraft-aks
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Azure Login
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v2
+
+    - name: Terraform Init & Apply
+      working-directory: ./ops/terraform/azure
+      run: |
+        terraform init
+        terraform apply -auto-approve \
+          -var="resource_group_name=${{ env.AZURE_RESOURCE_GROUP }}" \
+          -var="location=${{ env.AZURE_LOCATION }}"
+
+    - name: Login to ACR
+      run: az acr login --name ${{ env.ACR_NAME }}
+
+    - name: Build and Push Docker Images
+      run: |
+        docker build -t ${{ env.ACR_NAME }}.azurecr.io/api-gateway:latest ./services/api
+        docker build -t ${{ env.ACR_NAME }}.azurecr.io/vision-yolo:latest ./services/vision_yolo
+        docker build -t ${{ env.ACR_NAME }}.azurecr.io/nanovlm:latest ./services/nanovlm
+        docker build -t ${{ env.ACR_NAME }}.azurecr.io/titans-memory:latest ./services/titans_memory
+        
+        docker push ${{ env.ACR_NAME }}.azurecr.io/api-gateway:latest
+        docker push ${{ env.ACR_NAME }}.azurecr.io/vision-yolo:latest
+        docker push ${{ env.ACR_NAME }}.azurecr.io/nanovlm:latest
+        docker push ${{ env.ACR_NAME }}.azurecr.io/titans-memory:latest
+
+    - name: Get AKS Credentials
+      run: az aks get-credentials --resource-group ${{ env.AZURE_RESOURCE_GROUP }} --name ${{ env.AKS_CLUSTER_NAME }}
+
+    - name: Install Helm
+      uses: azure/setup-helm@v3
+
+    - name: Deploy via Helm
+      run: |
+        helm upgrade --install medcraft ./ops/helm/medcraft \
+          --set image.repository=${{ env.ACR_NAME }}.azurecr.io \
+          --set image.tag=latest \
+          --set env.REDIS_HOST=medcraft-redis.redis.cache.windows.net \
+          --set env.POSTGRES_HOST=medcraft-db.postgres.database.azure.com

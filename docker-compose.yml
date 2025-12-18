@@ -1,0 +1,102 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: medcraft
+      POSTGRES_PASSWORD: medcraft
+      POSTGRES_DB: medcraft
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+
+  minio:
+    image: minio/minio
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_data:/data
+
+  mlflow:
+    image: ghcr.io/mlflow/mlflow
+    ports:
+      - "5000:5000"
+    environment:
+      - MLFLOW_BACKEND_STORE_URI=postgresql://medcraft:medcraft@postgres:5432/medcraft
+      - MLFLOW_ARTIFACT_ROOT=s3://mlflow/
+      - AWS_ACCESS_KEY_ID=minioadmin
+      - AWS_SECRET_ACCESS_KEY=minioadmin
+      - MLFLOW_S3_ENDPOINT_URL=http://minio:9000
+    depends_on:
+      - postgres
+      - minio
+
+  api-gateway:
+    build: ./services/api
+    ports:
+      - "8000:8000"
+    environment:
+      - REDIS_HOST=redis
+      - VISION_SERVICE_URL=http://vision-yolo:8001
+      - MEMORY_SERVICE_URL=http://titans-memory:8002
+      - NANOVLM_SERVICE_URL=http://nanovlm:8003
+    depends_on:
+      - redis
+
+  vision-yolo:
+    build: ./services/vision_yolo
+    ports:
+      - "8001:8001"
+
+  titans-memory:
+    build: ./services/titans_memory
+    ports:
+      - "8002:8002"
+
+  nanovlm:
+    build: ./services/nanovlm
+    ports:
+      - "8003:8003"
+
+  airflow-webserver:
+    image: apache/airflow:2.7.1
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=CeleryExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://medcraft:medcraft@postgres:5432/medcraft
+      - AIRFLOW__CELERY__BROKER_URL=redis://redis:6379/0
+      - AIRFLOW__CELERY__RESULT_BACKEND=db+postgresql://medcraft:medcraft@postgres:5432/medcraft
+    ports:
+      - "8080:8080"
+    depends_on:
+      - postgres
+      - redis
+
+  prometheus:
+    image: prom/prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./ops/observability/prometheus.yml:/etc/prometheus/prometheus.yml
+
+  grafana:
+    image: grafana/grafana
+    ports:
+      - "3001:3000"
+    depends_on:
+      - prometheus
+
+volumes:
+  postgres_data:
+  minio_data:

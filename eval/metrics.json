@@ -1,0 +1,22 @@
+{
+  "parkinson": {
+    "accuracy": 0.92,
+    "latency_p95_ms": 450
+  },
+  "cxr": {
+    "accuracy": 0.89,
+    "latency_p95_ms": 620
+  },
+  "retina": {
+    "accuracy": 0.94,
+    "latency_p95_ms": 510
+  },
+  "pathology": {
+    "accuracy": 0.87,
+    "latency_p95_ms": 850
+  },
+  "nanovlm": {
+    "grounding_score": 0.91,
+    "latency_p95_ms": 1100
+  }
+}

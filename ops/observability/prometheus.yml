@@ -1,0 +1,19 @@
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: 'api-gateway'
+    static_configs:
+      - targets: ['api-gateway:8000']
+
+  - job_name: 'vision-yolo'
+    static_configs:
+      - targets: ['vision-yolo:8001']
+
+  - job_name: 'titans-memory'
+    static_configs:
+      - targets: ['titans-memory:8002']
+
+  - job_name: 'nanovlm'
+    static_configs:
+      - targets: ['nanovlm:8003']

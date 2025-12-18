@@ -1,0 +1,21 @@
+replicaCount: 1
+
+image:
+  repository: medcraftacr.azurecr.io
+  pullPolicy: IfNotPresent
+  tag: "latest"
+
+services:
+  api:
+    port: 8000
+  vision:
+    port: 8001
+  memory:
+    port: 8002
+  nanovlm:
+    port: 8003
+
+env:
+  REDIS_HOST: "medcraft-redis"
+  POSTGRES_HOST: "medcraft-db"
+  MINIO_ENDPOINT: "http://minio:9000"
