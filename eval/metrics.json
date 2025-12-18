@@ -1,10 +1,9 @@
 {
     "yolo": {
-        "mAP_50": 0.85,
-        "mAP_50_95": 0.65,
-        "precision": 0.9,
-        "recall": 0.88,
-        "hybrid_accuracy": 0.92
+        "num_images": 1,
+        "avg_latency_s": 0.18072891235351562,
+        "avg_detections_per_image": 0.0,
+        "total_detections": 0
     },
     "nanovlm": {
         "accuracy": 0.82,
@@ -13,10 +12,9 @@
         "rouge_l": 0.52
     },
     "titans": {
-        "recall_1k": 0.99,
-        "recall_10k": 0.95,
-        "recall_100k": 0.92,
-        "latency_ms_1k": 15,
-        "latency_ms_100k": 25
+        "num_sequences": 10,
+        "seq_len": 100,
+        "avg_latency_s": 0.0010704517364501954,
+        "avg_recall_proxy": -0.015049595572054385
     }
 }

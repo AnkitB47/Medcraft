@@ -1,0 +1,1 @@
+{"image_path": "data/images/sample.jpg", "prompt": "What is in this image?", "answer": "This is a sample medical image for testing purposes.", "roi_ids": [1]}

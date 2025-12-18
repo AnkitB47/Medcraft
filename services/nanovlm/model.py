@@ -144,12 +144,19 @@ class NanoVLM(nn.Module):
         # Simple Greedy Generation Loop
         curr_embeds = torch.cat([visual_embeds, self.text_decoder.get_input_embeddings()(input_ids)], dim=1)
         generated_tokens = []
+        log_probs = []
         
         for _ in range(max_new_tokens):
             outputs = self.text_decoder(inputs_embeds=curr_embeds)
             next_token_logits = outputs.logits[:, -1, :]
+            
+            # Calculate probabilities
+            probs = torch.softmax(next_token_logits, dim=-1)
             next_token = torch.argmax(next_token_logits, dim=-1).unsqueeze(0)
+            token_prob = probs[0, next_token.item()].item()
+            
             generated_tokens.append(next_token.item())
+            log_probs.append(token_prob)
             
             if next_token.item() == self.tokenizer.eos_token_id:
                 break
@@ -157,4 +164,7 @@ class NanoVLM(nn.Module):
             next_embed = self.text_decoder.get_input_embeddings()(next_token)
             curr_embeds = torch.cat([curr_embeds, next_embed], dim=1)
             
-        return self.tokenizer.decode(generated_tokens, skip_special_tokens=True)
+        decoded_text = self.tokenizer.decode(generated_tokens, skip_special_tokens=True)
+        avg_confidence = sum(log_probs) / len(log_probs) if log_probs else 0.0
+        
+        return decoded_text, avg_confidence

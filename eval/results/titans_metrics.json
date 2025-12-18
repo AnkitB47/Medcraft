@@ -1,7 +1,6 @@
 {
-    "recall_1k": 0.99,
-    "recall_10k": 0.95,
-    "recall_100k": 0.92,
-    "latency_ms_1k": 15,
-    "latency_ms_100k": 25
+    "num_sequences": 10,
+    "seq_len": 100,
+    "avg_latency_s": 0.0010704517364501954,
+    "avg_recall_proxy": -0.015049595572054385
 }
