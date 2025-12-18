@@ -1,6 +1,6 @@
 {
-    "accuracy": 0.82,
-    "groundedness_score": 0.88,
-    "bleu_score": 0.45,
-    "rouge_l": 0.52
+    "num_images": 1,
+    "avg_latency_s": 2183.686993598938,
+    "consistency_score": 1.0,
+    "device": "cpu"
 }

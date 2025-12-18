@@ -7,6 +7,7 @@ MedCraft is an enterprise-grade AI platform for medical analysis, featuring:
 - **MLOps**: Full Airflow pipelines for data, training, and evaluation.
 
 **[DATA SETUP INSTRUCTIONS](DATA_SETUP.md)** - Read this first to populate datasets.
+**[WORKFLOW & ARCHITECTURE](C:\Users\Ankit Bhardwaj\.gemini\antigravity\brain\c9898ac1-9e86-4727-afd3-e93932758b3a\workflow_overview.md)** - Detailed flowcharts and automation overview.
 
 ## 🚀 Quick Start
 
