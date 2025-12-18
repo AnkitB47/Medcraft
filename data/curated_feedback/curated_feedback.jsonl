@@ -1,0 +1,1 @@
+{"image_path": "data\\cxr\\images\\sample_001.jpg", "prompt": "Diagnose this CXR", "answer": "Normal chest x-ray.", "roi_ids": [1]}

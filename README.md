@@ -6,6 +6,8 @@ MedCraft is an enterprise-grade AI platform for medical analysis, featuring:
 - **Hybrid Vision**: YOLOv8 + ViT for robust detection and classification.
 - **MLOps**: Full Airflow pipelines for data, training, and evaluation.
 
+**[DATA SETUP INSTRUCTIONS](DATA_SETUP.md)** - Read this first to populate datasets.
+
 ## 🚀 Quick Start
 
 ### Local Development

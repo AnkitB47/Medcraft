@@ -1,6 +1,6 @@
 {
     "num_sequences": 10,
     "seq_len": 100,
-    "avg_latency_s": 0.0010704517364501954,
-    "avg_recall_proxy": -0.015049595572054385
+    "avg_latency_s": 0.014212465286254883,
+    "avg_recall_proxy": -0.0074296299368143085
 }

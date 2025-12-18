@@ -30,7 +30,13 @@ push:
 deploy:
 	gh workflow run deploy.yml
 
-eval_all:
+data_public:
+	python scripts/download_public_datasets.py
+
+data_byod_check:
+	python scripts/validate_data.py
+
+eval_all: data_byod_check
 	python eval/eval_yolo.py
 	python eval/eval_nanovlm.py
 	python eval/eval_titans.py
